@@ -12,11 +12,8 @@ def main():
     """
     if run as script, this func is executed.
     """
-    obs = wavSlice(sys.argv[1])
-    obs.setInputWavesDir(sys.argv[3]).open().setToMainList().open(
-        sys.argv[2], isCsv=True).setToIdFileList().setBpm(110)
-    obs.formatList()
-
+    obs = wavSlice(* sys.argv[2:5])
+    obs.open(sys.argv[1]).setOpenedFileToList().slice()
 
 T = TypeVar('T')
 
@@ -26,26 +23,29 @@ class wavSlice(Generic[T]):
     gen a long wav file to a short wav file with the specified note and bpm.
     """
 
-    def __init__(self, path: str = '') -> None:
+    def __init__(self, bpm: int, inputDir: str, outputDir: str = '') -> None:
         super().__init__()
-        self._textPath = path
-        self._bpm = 120
+        self._bpm = int(bpm)
+        self._inputDir = inputDir
+        self._outputDir = outputDir if outputDir != '' else inputDir
 
     def setBpm(self, bpm: int) -> T:
-        self._bpm = bpm
+        self._bpm = int(bpm)
         return self
 
-    def setInputWavesDir(self, dir_: str) -> T:
-        self._dir = dir_
+    def setInputWavesDir(self, inputDir: str) -> T:
+        self._inDir = inputDir
+        return self
+
+    def setOutputWavesDir(self, outputDir: str) -> T:
+        self._outDir = outputDir
         return self
 
     # @classmethod
-    def open(self, path: str = '', isCsv: bool = False) -> T:
+    def open(self, path: str, isCsv: bool = True) -> T:
         """
         docstring
         """
-        if path == '':
-            path = self._textPath
         try:
             file = open(path)
         except Exception as e:
@@ -54,28 +54,19 @@ class wavSlice(Generic[T]):
         if not isinstance(file, TextIOWrapper):
             raise FileTypeError(f'reading illegal file')
 
-        self._text = []
+        self._openedText = []
         if isCsv:
-            self._text = [line for line in csv.reader(file)]
+            self._openedText = [line for line in csv.reader(file)]
         else:
-            self._text = [line.strip() for line in file.readlines()]
+            self._openedText = [line.strip() for line in file.readlines()]
 
         file.close
         return self
 
-    def setToMainList(self) -> T:
+    def setOpenedFileToList(self) -> T:
         """
-        set _mainList opened list
         """
-        self._mainList = self._text
-        return self
-
-    def setToIdFileList(self) -> T:
-        """
-        set _idFileList opened list
-        id="filepath"
-        """
-        self._idFileList = self._text
+        self._sliceDefinitions = [[x[0], x[1], y] for x in self._openedText for y in x[2:]]
         return self
 
     def exportShellscript(self, path: str, overwrite: bool = False) -> None:
@@ -94,31 +85,28 @@ class wavSlice(Generic[T]):
             pass
 
     # HACK: temp
-    def formatList(self):
+    def slice(self):
         """
-        parse original text.
+        parse csv.
 
-        doc rules
-        # = comment. inline comment is not supported.
-        id,num = note. can use dot.
+        csv file rules
+        notes(not use, for user memo.), wav_file_name, ...note_length
         e.g.
-        # this is comment
-        01,8 = id 01 is convert to eighth note.
-        05,4. = id 05 is convert to dotted quarter note.
+        base#c, 2204cps.wav, 8    # slice to eighth note length.
+        screech, wow_metal.wav, 4, 4.    # slice to quarter note and dotted quarter note length.
         """
-        self._mainList = wavSlice.removeComments(self._mainList, '#')
-        self._mainList = wavSlice.removeBlankLines(self._mainList)
 
-        self._mainList = [[line.split(',')[0], line.split(',')[1:]] for line in self._mainList]
-        self._mainList = [[x[0], y] for x in self._mainList for y in x[1]]
+        for xx in self._sliceDefinitions:
+            inputFile = str(Path(self._inputDir, xx[1]))
 
-        for xx in self._mainList:
-            inputFile = self.idToFilePath(xx[0])
-            ms = self.noteStrToMs(xx[1], self._bpm)
-            outputFile = re.sub(r'(.*)(.wav)', r'\g<1>_' + str(ms) + r'\2', inputFile)
-            self.sliceByPydub(inputFile, outputFile, ms)
+            note, self._multiplier = wavSlice.parseNoteDotted(xx[2])
+            ms = wavSlice.noteIntToMs(note, self._multiplier, self._bpm)
+            suffix = str(ms) if self.getSuffix() == 'none'else str(note) + self.getSuffix()
 
-    def sliceByPydub(self, input: str, output: str, end: int, begin: int = 0) -> None:
+            outputFile = re.sub(r'(.*)(.wav)', r'\g<1>_' + suffix + r'\2', str(Path(self._outputDir, xx[1])))
+            self._sliceByPydub(inputFile, outputFile, ms)
+
+    def _sliceByPydub(self, input: str, output: str, end: int, begin: int = 0) -> None:
         """
         TODO: this method move to pydub wrapper class
         """
@@ -130,14 +118,20 @@ class wavSlice(Generic[T]):
         else:
             print(f'{output} is too long specified.\tsound duration: {int(sound.duration_seconds * 1000)}ms')
 
-    def idToFilePath(self, id_: str) -> str:
-        filename = [x[1] for x in self._idFileList if x[0] == id_][0]
-        return str(Path(self._dir, filename))
+    def getSuffix(self) -> str:
+        if self._multiplier == 1.75:
+            return 'dd'
+        elif self._multiplier == 1.5:
+            return 'dot'
+        elif self._multiplier == 1.25:
+            return 'none'
+        return ''
 
-    @staticmethod
-    def parseDotted(numString: str) -> Tuple[int, float]:
+    @ staticmethod
+    def parseNoteDotted(numString: str) -> Tuple[int, float, str]:
         """
-        input: num string, suffix dot, double-dotted, dash(1.25)
+        arg: num string, suffix dot, double-dotted, dash(1.25)
+        return: (int(args1), multiplier, suffix_string)
         ICEBOX: validate numString. now runtime error.
         """
         if '..' in numString:
@@ -149,7 +143,7 @@ class wavSlice(Generic[T]):
 
         return int(numString), 1
 
-    @staticmethod
+    @ staticmethod
     def noteIntToMs(note: int, multiplier: float = 1, bpm: int = 120) -> int:
         """
         CROTCHET = quarter note ms
@@ -159,15 +153,7 @@ class wavSlice(Generic[T]):
         CROTCHET: int = 60 * 1000 / bpm
         return int(4 / note * CROTCHET * multiplier)
 
-    @staticmethod
-    def noteStrToMs(numString: str, bpm: float) -> int:
-        """
-        input: num string, suffix dot, double-dotted, dash(1.25)
-        """
-        note, multiplier = wavSlice.parseDotted(numString)
-        return wavSlice.noteIntToMs(note, multiplier, bpm)
-
-    @staticmethod
+    @ staticmethod
     def removeComments(trg: List[str], symbol: str):
         """
         ICEBOX: support multiple symbol
@@ -176,7 +162,7 @@ class wavSlice(Generic[T]):
         regex = re.compile(r'^' + symbol + '.*$')
         return [line for line in trg if not regex.match(line)]
 
-    @staticmethod
+    @ staticmethod
     def removeBlankLines(trg: List[str]):
         return [line for line in trg if '' != line]
 
