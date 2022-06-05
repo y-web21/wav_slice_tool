@@ -132,7 +132,7 @@ class wavSlice(Generic[T]):
 
         for uuu in self.getDefinition():
             currentMsPosition = 0
-            digit = len(uuu) if len(uuu) > 1 else 2
+            digit = len(str(len(uuu))) if len(str(len(uuu)))  > 1  else 2
             uuu.append(deepcopy(uuu[-1]))
             uuu[-1][2] = 'eof'
             uuu[-1][3] = ''
@@ -140,14 +140,18 @@ class wavSlice(Generic[T]):
             for i, xx in enumerate(uuu):
                 inputFile = str(Path(self._inputDir, xx[1]))
 
-                note, multiplier = wavSlice.parseNoteDotted(xx[3])
-                ms = wavSlice.noteIntToMs(note, multiplier, self._bpm)
+                # TODO: 処理切り出し
+                if not re.match(r'^.*ms$', xx[3]):
+                    note, multiplier = wavSlice.parseNoteDotted(xx[3])
+                    ms = wavSlice.noteIntToMs(note, multiplier, self._bpm)
+                    suffix = f'{str(ms)}ms' if self.getSuffix(
+                        multiplier) == 'none'else str(note) + self.getSuffix(multiplier)
+                else:
+                    ms = int(str(xx[3]).replace('ms',''))
+                    suffix = f'{str(ms)}ms'
 
                 if xx[2] != '':
                     suffix = xx[2]
-                else:
-                    suffix = f'{str(ms)}ms' if self.getSuffix(
-                        multiplier) == 'none'else str(note) + self.getSuffix(multiplier)
 
                 outputFile = re.sub(r'(.*)(.wav)', r'\g<1>_' + str(i).zfill(digit) + r'_' +
                                     suffix + r'\2', str(Path(self._outputDir, xx[1])))
