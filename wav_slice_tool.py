@@ -66,7 +66,13 @@ class wavSlice(Generic[T]):
     def setOpenedFileToList(self) -> T:
         """
         """
-        self._sliceDefinitions = [[x[0], x[1], y] for x in self._openedText for y in x[2:]]
+        self._sliceDefinitions = [[x[0], x[1], x[2], y] for x in self._openedText for y in x[3:]]
+        return self
+
+    def setOpenedFileToSplitList(self) -> T:
+        """
+        """
+        self._splitDefinitions = [[x[0], x[1], x[2], y] for x in self._openedText for y in x[3:]]
         return self
 
     def exportShellscript(self, path: str, overwrite: bool = False) -> None:
@@ -87,10 +93,11 @@ class wavSlice(Generic[T]):
     # HACK: temp
     def slice(self):
         """
-        parse csv.
+        parse csv. and slice a wav file from 0 ms.
 
-        csv file rules
-        notes(not use, for user memo.), wav_file_name, ...note_length
+        csv file rules.
+        1. no header. (field name not required on line 1)
+        2. field  ->  notes(not use, for user memo.), wav_file_name, suffix, ...note_length
         e.g.
         base#c, 2204cps.wav, 8    # slice to eighth note length.
         screech, wow_metal.wav, 4, 4.    # slice to quarter note and dotted quarter note length.
@@ -99,13 +106,18 @@ class wavSlice(Generic[T]):
         for xx in self._sliceDefinitions:
             inputFile = str(Path(self._inputDir, xx[1]))
 
-            note, self._multiplier = wavSlice.parseNoteDotted(xx[2])
-            ms = wavSlice.noteIntToMs(note, self._multiplier, self._bpm)
-            suffix = str(ms) if self.getSuffix() == 'none'else str(note) + self.getSuffix()
+            note, multiplier = wavSlice.parseNoteDotted(xx[3])
+            ms = wavSlice.noteIntToMs(note, multiplier, self._bpm)
+
+            if xx[2] != '':
+                suffix = xx[2]
+            else:
+                suffix = str(ms) if self.getSuffix(multiplier) == 'none'else str(note) + self.getSuffix(multiplier)
 
             outputFile = re.sub(r'(.*)(.wav)', r'\g<1>_' + suffix + r'\2', str(Path(self._outputDir, xx[1])))
             self._sliceByPydub(inputFile, outputFile, ms)
 
+    fadeOut:int = 20
     def _sliceByPydub(self, input: str, output: str, end: int, begin: int = 0) -> None:
         """
         TODO: this method move to pydub wrapper class
@@ -114,16 +126,16 @@ class wavSlice(Generic[T]):
             os.remove(output)
         sound = AudioSegment.from_file(input, format="wav")
         if sound.duration_seconds * 1000 > end - begin:
-            sound[begin:end].fade_out(20).export(output, format="wav")
+            sound[begin:end].fade_out(self.fadeOut).export(output, format="wav")
         else:
             print(f'{output} is too long specified.\tsound duration: {int(sound.duration_seconds * 1000)}ms')
 
-    def getSuffix(self) -> str:
-        if self._multiplier == 1.75:
+    def getSuffix(self, multiplier: float) -> str:
+        if multiplier == 1.75:
             return 'dd'
-        elif self._multiplier == 1.5:
+        elif multiplier == 1.5:
             return 'dot'
-        elif self._multiplier == 1.25:
+        elif multiplier == 1.25:
             return 'none'
         return ''
 
