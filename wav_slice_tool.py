@@ -1,3 +1,4 @@
+from copy import deepcopy
 import csv
 from io import TextIOWrapper
 import os
@@ -13,7 +14,9 @@ def main():
     if run as script, this func is executed.
     """
     obs = wavSlice(* sys.argv[2:5])
-    obs.open(sys.argv[1]).setOpenedFileToList().slice()
+    # obs.open(sys.argv[1]).setOpenedFileToList().slice()
+    obs.open(sys.argv[1]).setOpenedFileToSplitList().split()
+
 
 T = TypeVar('T')
 
@@ -72,8 +75,12 @@ class wavSlice(Generic[T]):
     def setOpenedFileToSplitList(self) -> T:
         """
         """
-        self._splitDefinitions = [[x[0], x[1], x[2], y] for x in self._openedText for y in x[3:]]
+        self._splitDefinitions = self._openedText
         return self
+
+    def getDefinition(self):
+        for line in self._splitDefinitions:
+            yield [[line[0], line[1], line[2], x] for x in line[3:]]
 
     def exportShellscript(self, path: str, overwrite: bool = False) -> None:
         """
@@ -115,17 +122,68 @@ class wavSlice(Generic[T]):
                 suffix = str(ms) if self.getSuffix(multiplier) == 'none'else str(note) + self.getSuffix(multiplier)
 
             outputFile = re.sub(r'(.*)(.wav)', r'\g<1>_' + suffix + r'\2', str(Path(self._outputDir, xx[1])))
-            self._sliceByPydub(inputFile, outputFile, ms)
+            self._sliceByPydub(inputFile, outputFile, 0, ms)
 
-    fadeOut:int = 20
-    def _sliceByPydub(self, input: str, output: str, end: int, begin: int = 0) -> None:
+    # HACK: temp
+    def split(self):
         """
+        split
+        """
+
+        for uuu in self.getDefinition():
+            currentMsPosition = 0
+            digit = len(uuu) if len(uuu) > 1 else 2
+            uuu.append(deepcopy(uuu[-1]))
+            uuu[-1][2] = 'eof'
+            uuu[-1][3] = ''
+
+            for i, xx in enumerate(uuu):
+                inputFile = str(Path(self._inputDir, xx[1]))
+
+                note, multiplier = wavSlice.parseNoteDotted(xx[3])
+                ms = wavSlice.noteIntToMs(note, multiplier, self._bpm)
+
+                if xx[2] != '':
+                    suffix = xx[2]
+                else:
+                    suffix = f'{str(ms)}ms' if self.getSuffix(
+                        multiplier) == 'none'else str(note) + self.getSuffix(multiplier)
+
+                outputFile = re.sub(r'(.*)(.wav)', r'\g<1>_' + str(i).zfill(digit) + r'_' +
+                                    suffix + r'\2', str(Path(self._outputDir, xx[1])))
+
+                self._sliceByPydub(inputFile, outputFile, currentMsPosition, ms + currentMsPosition)
+
+                currentMsPosition += ms
+
+
+    fadeOut: int = 20
+
+    def _sliceByPydub(self, input: str, output: str, begin: int = 0, end: int = -1) -> None:
+        """pydub pydub pydub
+
         TODO: this method move to pydub wrapper class
+        Slicing a single wav file
+
+        Args:
+            input (str): input wave file path
+            output (str): output wave file path
+            end (int): begin of cut position(ms)
+            begin (int): begin of cut position(ms)
+
+        Returns:
+            bool: Description of return value
+
         """
         if Path(output).exists():
             os.remove(output)
+
         sound = AudioSegment.from_file(input, format="wav")
-        if sound.duration_seconds * 1000 > end - begin:
+
+        if end < 0:
+            end = int(sound.duration_seconds * 1000)
+
+        if sound.duration_seconds * 1000 > end:
             sound[begin:end].fade_out(self.fadeOut).export(output, format="wav")
         else:
             print(f'{output} is too long specified.\tsound duration: {int(sound.duration_seconds * 1000)}ms')
@@ -140,7 +198,7 @@ class wavSlice(Generic[T]):
         return ''
 
     @ staticmethod
-    def parseNoteDotted(numString: str) -> Tuple[int, float, str]:
+    def parseNoteDotted(numString: str) -> Tuple[int, float]:
         """
         arg: num string, suffix dot, double-dotted, dash(1.25)
         return: (int(args1), multiplier, suffix_string)
@@ -152,8 +210,9 @@ class wavSlice(Generic[T]):
             return int(numString.replace('.', '')), 1.5
         elif '-' in numString:
             return int(numString.replace('-', '')), 1.25
-
-        return int(numString), 1
+        elif '' != numString:
+            return int(numString), 1
+        return -1, 1
 
     @ staticmethod
     def noteIntToMs(note: int, multiplier: float = 1, bpm: int = 120) -> int:
