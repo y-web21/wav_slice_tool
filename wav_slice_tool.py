@@ -29,29 +29,33 @@ class wavSlice(Generic[T]):
     def __init__(self, bpm: int, inputDir: str, outputDir: str = '') -> None:
         super().__init__()
         self._bpm = int(bpm)
-        self._inputDir = inputDir
-        self._outputDir = outputDir if outputDir != '' else inputDir
-        if not Path(self._outputDir).exists():
-            os.mkdir(self._outputDir)
+        self.paths = { 'inputDir': inputDir }
+        self.paths['outputDir'] = outputDir if outputDir != '' else inputDir
+
+        self.paths = self._solveRelativePath(self.paths)
+
+        if not Path(self.paths['outputDir']).exists():
+            os.mkdir(self.paths['outputDir'])
+
+    @ staticmethod
+    def _solveRelativePath(paths:dict[str]) -> dict[str]:
+        for x, y in paths.items():
+            if not Path(y).is_absolute():
+                paths[x] = str(Path(y).resolve())
+        return paths
 
     def setBpm(self, bpm: int) -> T:
         self._bpm = int(bpm)
-        return self
-
-    def setInputWavesDir(self, inputDir: str) -> T:
-        self._inDir = inputDir
-        return self
-
-    def setOutputWavesDir(self, outputDir: str) -> T:
-        self._outDir = outputDir
         return self
 
     def readSettingFile(self, path: str, isCsv: bool = True) -> T:
         """
         docstring
         """
+        self.paths['definitionFile'] =  path
+        self._solveRelativePath(self.paths)
         try:
-            file = open(path)
+            file = open(self.paths['definitionFile'])
         except Exception as e:
             print(repr(e))
 
@@ -67,13 +71,12 @@ class wavSlice(Generic[T]):
         file.close
         return self
 
-    def iterSliceDefinition(self) -> List:
-        for line in self._definitions:
-            yield  [[line[0], line[1], line[2], x] for x in line[3:]]
-
-    def iterSplitDefinition(self) -> List:
+    def _iterSliceDefinition(self) -> List:
         for line in self._definitions:
             yield [[line[0], line[1], line[2], x] for x in line[3:]]
+
+    def _iterSplitDefinition(self) -> List:
+        return self._iterSliceDefinition()
 
     def exportShellscript(self, path: str, overwrite: bool = False) -> None:
         """
@@ -103,10 +106,10 @@ class wavSlice(Generic[T]):
         screech, wow_metal.wav,, 4, 4.    # slice to quarter note and dotted quarter note length.
         """
 
-        for chunk in self.iterSliceDefinition():
+        for chunk in self._iterSliceDefinition():
 
             for line in chunk:
-                inputFile = str(Path(self._inputDir, line[1]))
+                inputFile = str(Path(self.paths['inputDir'], line[1]))
 
                 note, multiplier = wavSlice.parseNoteDotted(line[3])
                 ms = wavSlice.noteIntToMs(note, multiplier, self._bpm)
@@ -114,9 +117,9 @@ class wavSlice(Generic[T]):
                 if line[2] != '':
                     suffix = line[2]
                 else:
-                    suffix = str(ms) if self.getSuffix(multiplier) == 'none'else str(note) + self.getSuffix(multiplier)
+                    suffix = str(ms) if self._getSuffix(multiplier) == 'none'else str(note) + self._getSuffix(multiplier)
 
-                outputFile = re.sub(r'(.*)(.wav)', r'\g<1>_' + suffix + r'\2', str(Path(self._outputDir, line[1])))
+                outputFile = re.sub(r'(.*)(.wav)', r'\g<1>_' + suffix + r'\2', str(Path(self.paths['outputDir'], line[1])))
                 self._sliceByPydub(inputFile, outputFile, 0, ms)
 
     # HACK: temp
@@ -132,7 +135,7 @@ class wavSlice(Generic[T]):
         screech, wow_metal.wav,, 980ms, 4    # split into 3 files. after 980 ms, quarter note timing.
         """
 
-        for chunk in self.iterSplitDefinition():
+        for chunk in self._iterSplitDefinition():
             currentMsPosition = 0
             digit = len(str(len(chunk))) if len(str(len(chunk)))  > 1  else 2
             chunk.append(deepcopy(chunk[-1]))
@@ -140,14 +143,14 @@ class wavSlice(Generic[T]):
             chunk[-1][3] = ''
 
             for i, instruction in enumerate(chunk):
-                inputFile = str(Path(self._inputDir, instruction[1]))
+                inputFile = str(Path(self.paths['inputDir'], instruction[1]))
 
                 # TODO: process cutout
                 if not re.match(r'^.*ms$', instruction[3]):
                     note, multiplier = wavSlice.parseNoteDotted(instruction[3])
                     ms = wavSlice.noteIntToMs(note, multiplier, self._bpm)
-                    suffix = f'{str(ms)}ms' if self.getSuffix(
-                        multiplier) == 'none'else str(note) + self.getSuffix(multiplier)
+                    suffix = f'{str(ms)}ms' if self._getSuffix(
+                        multiplier) == 'none'else str(note) + self._getSuffix(multiplier)
                 else:
                     ms = int(str(instruction[3]).replace('ms',''))
                     suffix = f'{str(ms)}ms'
@@ -156,7 +159,7 @@ class wavSlice(Generic[T]):
                     suffix = instruction[2]
 
                 outputFile = re.sub(r'(.*)(.wav)', r'\g<1>_' + str(i).zfill(digit) + r'_' +
-                                    suffix + r'\2', str(Path(self._outputDir, instruction[1])))
+                                    suffix + r'\2', str(Path(self.paths['outputDir'], instruction[1])))
 
                 self._sliceByPydub(inputFile, outputFile, currentMsPosition, ms + currentMsPosition)
 
@@ -194,7 +197,8 @@ class wavSlice(Generic[T]):
         else:
             print(f'{output} is too long specified.\tsound duration: {int(sound.duration_seconds * 1000)}ms')
 
-    def getSuffix(self, multiplier: float) -> str:
+    @ staticmethod
+    def _getSuffix(multiplier: float) -> str:
         if multiplier == 1.75:
             return 'dd'
         elif multiplier == 1.5:
